@@ -5,7 +5,7 @@ real_number = @{ ("-")? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 // 虚数リテラルを追加 (例: 5i, -2.5i)
 imaginary_number = { real_number ~ "i" }
 
-variable = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
+variable = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 function_call = { variable ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
 
 // operandの定義を更新
