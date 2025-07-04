@@ -1,0 +1,35 @@
+WHITESPACE = _{ " " | "\t" }
+
+// "number" を "real_number" にリネームし、実数であることを明確化
+real_number = @{ ("-")? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+// 虚数リテラルを追加 (例: 5i, -2.5i)
+imaginary_number = { real_number ~ "i" }
+
+variable = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC)* }
+function_call = { variable ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+
+// operandの定義を更新
+operand  = {
+    function_call |
+    imaginary_number | // 虚数を先に解釈
+    real_number |
+    variable |
+    "(" ~ expr ~ ")"
+}
+
+// --- 演算子の定義（変更なし） ---
+add_op = { "+" }
+sub_op = { "-" }
+mul_op = { "*" }
+div_op = { "/" }
+pos_op = { "+" }
+neg_op = { "-" }
+
+// --- 式全体の構造（変更なし） ---
+expr = {
+    (pos_op | neg_op)* ~
+    operand ~
+    ((add_op | sub_op | mul_op | div_op) ~ operand)*
+}
+
+calculation = { SOI ~ expr ~ EOI }

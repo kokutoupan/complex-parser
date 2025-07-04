@@ -1,0 +1,9 @@
+alpha = { 'a'..'z' | 'A'..'Z' }
+digit = { '0'..'9' }
+eq = { "=" }
+
+ident = { !digit ~ (alpha | digit)+ }
+
+ident_list = _{ ident ~ (" " ~ ident)* }
+
+formula = { ident ~ eq ~ ident_list}
