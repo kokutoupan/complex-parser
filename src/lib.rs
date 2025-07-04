@@ -6,10 +6,11 @@ extern crate pest_derive;
 use num_complex::Complex;
 
 use pest::Parser;
-use pest::iterators::{Pair, Pairs};
+use pest::iterators::{Pairs};
 use pest_derive::Parser;
 // use num_complex::Complex;
 use pest::pratt_parser::{Op, PrattParser};
+use wasm_bindgen::prelude::*;
 
 // Cloneトレイトを追加
 #[derive(Debug, Clone)]
@@ -350,6 +351,37 @@ fn main() {
             Err(e) => {
                 println!("Parse failed for '{}':\n{}", input, e);
             }
+        }
+    }
+}
+// --- WASMから呼び出される公開関数 ---
+
+/// パニック時にコンソールに詳細なエラーを出力するための初期設定
+#[wasm_bindgen]
+pub fn set_panic_hook() {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+}
+
+/// 数式文字列を受け取り、GLSLの式を返すメイン関数
+#[wasm_bindgen]
+pub fn get_glsl_output(input: &str) -> String {
+    // 入力が空なら何も返さない
+    if input.trim().is_empty() {
+        return "".to_string();
+    }
+
+    // これまでmain関数で行っていた処理を実行
+    match MyComplex::parse(Rule::calculation, input) {
+        Ok(mut pairs) => {
+            let expression = pairs.next().unwrap().into_inner().find(|p| p.as_rule() == Rule::expr).unwrap();
+            let ast = parse_to_ast(expression.into_inner());
+            let optimized_ast = optimize_ast(&ast);
+            generate_glsl(&optimized_ast)
+        }
+        Err(e) => {
+            // パースエラーの場合は、その内容を文字列として返す
+            format!("Parse Error:\n{}", e)
         }
     }
 }
