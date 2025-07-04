@@ -116,14 +116,11 @@ fn parse_to_ast(pairs: Pairs<Rule>) -> AstNode {
                 let val = s[..s.len() - 1].parse().unwrap();
                 AstNode::ComplexNumber(Complex::new(0.0, val))
             }
-            Rule::variable => {
-                let name = primary.as_str();
-                if name == "i" {
-                    AstNode::ComplexNumber(Complex::i())
-                } else {
-                    AstNode::Variable(name.to_string())
-                }
-            }
+            Rule::variable => match primary.as_str() {
+                "i" => AstNode::ComplexNumber(Complex::i()),
+                "pi" => AstNode::ComplexNumber(Complex::new(std::f64::consts::PI, 0.0)),
+                name => AstNode::Variable(name.to_string()),
+            },
             Rule::function_call => {
                 let mut inner = primary.into_inner();
                 let name = inner.next().unwrap().as_str().to_string();
@@ -172,9 +169,13 @@ fn optimize_ast(node: &AstNode) -> AstNode {
                     ("sin", &[c]) => AstNode::ComplexNumber(c.sin()),
                     ("cos", &[c]) => AstNode::ComplexNumber(c.cos()),
                     ("tan", &[c]) => AstNode::ComplexNumber(c.tan()),
-                    // absは実数を返すので、虚部0の複素数としてラップする
+                    ("exp", &[c]) => AstNode::ComplexNumber(c.exp()),
+                    ("ln", &[c]) | ("log", &[c]) => AstNode::ComplexNumber(c.ln()),
+                    ("asin", &[c]) | ("arcsin", &[c]) => AstNode::ComplexNumber(c.asin()),
+                    ("acos", &[c]) | ("arccos", &[c]) => AstNode::ComplexNumber(c.acos()),
+                    ("atan", &[c]) | ("arctan", &[c]) => AstNode::ComplexNumber(c.atan()),
+                    ("pow", &[base, exponent]) => AstNode::ComplexNumber(base.powc(exponent)),
                     ("abs", &[c]) => AstNode::ComplexNumber(Complex::new(c.norm(), 0.0)),
-                    // 複素数特有の関数
                     ("real", &[c]) => AstNode::ComplexNumber(Complex::new(c.re, 0.0)),
                     ("imag", &[c]) => AstNode::ComplexNumber(Complex::new(c.im, 0.0)),
                     ("conj", &[c]) => AstNode::ComplexNumber(c.conj()),
@@ -233,14 +234,94 @@ fn optimize_ast(node: &AstNode) -> AstNode {
     }
 }
 
+fn generate_glsl(node: &AstNode) -> String {
+    match node {
+        AstNode::ComplexNumber(c) => {
+            // f64をGLSLのfloatリテラル文字列に変換するヘルパー関数
+            let to_glsl_float = |val: f64| -> String {
+                if val.abs() < 1e-9 {
+                    return "0.0".to_string();
+                }
+                let s = format!("{}", val);
+                if !s.contains('.') && !s.contains('e') {
+                    format!("{}.0", s)
+                } else {
+                    s
+                }
+            };
+
+            let re_str = to_glsl_float(c.re);
+            let im_str = to_glsl_float(c.im);
+
+            format!("vec2({}, {})", re_str, im_str)
+        }
+        AstNode::Variable(name) => name.clone(), // 変数名はそのまま使用
+        AstNode::FunctionCall { name, args } => {
+            let glsl_args: Vec<String> = args.iter().map(generate_glsl).collect();
+            match (name.as_str(), glsl_args.as_slice()) {
+                ("abs", [arg]) => format!("vec2(length({}), 0.0)", arg),
+                ("real", [arg]) => format!("vec2(({}).x, 0.0)", arg),
+                ("imag", [arg]) => format!("vec2(({}).y, 0.0)", arg),
+                ("conj", [arg]) => format!("vec2(({}).x, -({}).y)", arg, arg),
+                ("sqrt", [arg]) => format!("csqrt({})", arg),
+                ("sin", [arg]) => format!("csin({})", arg),
+                ("cos", [arg]) => format!("ccos({})", arg),
+                ("tan", [arg]) => format!("ctan({})", arg),
+                ("exp", [arg]) => format!("cexp({})", arg),
+                ("ln", [arg]) | ("log", [arg]) => format!("clog({})", arg),
+                ("asin", [arg]) | ("arcsin", [arg]) => format!("casin({})", arg),
+                ("acos", [arg]) | ("arccos", [arg]) => format!("cacos({})", arg),
+                ("atan", [arg]) | ("arctan", [arg]) => format!("catan({})", arg),
+                ("pow", [base, exponent]) => format!("cpow({}, {})", base, exponent),
+                _ => format!("{}({})", name, glsl_args.join(", ")),
+            }
+        }
+        AstNode::UnaryOp { op, child } => {
+            let child_glsl = generate_glsl(child);
+            match op {
+                Rule::neg_op => format!("(-{})", child_glsl),
+                // 単項プラスは最適化で消えているはずだが、念のため
+                Rule::pos_op => child_glsl,
+                _ => unreachable!(),
+            }
+        }
+        AstNode::BinaryOp { op, lhs, rhs } => {
+            let lhs_glsl = generate_glsl(lhs);
+            let rhs_glsl = generate_glsl(rhs);
+            // 演算子の優先順位を考慮し、常に括弧で囲むのが安全
+            match op {
+                Rule::add_op => format!("({} + {})", lhs_glsl, rhs_glsl),
+                Rule::sub_op => format!("({} - {})", lhs_glsl, rhs_glsl),
+                // 複素数の乗算・除算はヘルパー関数を呼び出す
+                Rule::mul_op => format!("cmul({}, {})", lhs_glsl, rhs_glsl),
+                Rule::div_op => format!("cdiv({}, {})", lhs_glsl, rhs_glsl),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
 fn main() {
     let inputs = vec![
-        "5i * 5i",
-        "max(2 * 5, 12)",
-        "sin(0) + cos(0)",
-        "foo(x + 1, 2, y)",
-        "sqrt(abs(-16))",
+        "z * z + c",
+        "(1 + i) / (1 - i)",
+        "sqrt(-4) * 2i",
+        "conj(abs(3 + 4i))",
+        "my_func(z, c) + 2",
     ];
+
+    println!("// GLSL Helper Functions needed by the generated code:");
+    println!("// vec2 cmul(vec2 a, vec2 b) {{ ... }}");
+    println!("// vec2 cdiv(vec2 a, vec2 b) {{ ... }}");
+    println!("// vec2 csqrt(vec2 z) {{ ... }}");
+    println!("// float sinh(float x) {{ return 0.5 * (exp(x) - exp(-x)); }}");
+    println!("// float cosh(float x) {{ return 0.5 * (exp(x) + exp(-x)); }}");
+    println!("// vec2 cexp(vec2 z) {{ return exp(z.x) * vec2(cos(z.y), sin(z.y)); }}");
+    println!("// vec2 csin(vec2 z) {{ return vec2(sin(z.x) * cosh(z.y), cos(z.x) * sinh(z.y)); }}");
+    println!(
+        "// vec2 ccos(vec2 z) {{ return vec2(cos(z.x) * cosh(z.y), -sin(z.x) * sinh(z.y)); }}"
+    );
+    println!("// vec2 ctan(vec2 z) {{ return cdiv(csin(z), ccos(z)); }}");
 
     for input in inputs {
         println!("--------------------");
@@ -261,6 +342,10 @@ fn main() {
 
                 let optimized_ast = optimize_ast(&ast);
                 println!("Optimized AST: {}", optimized_ast);
+
+                // GLSLコードを生成
+                let glsl_code = generate_glsl(&optimized_ast);
+                println!("GLSL Output:   {}", glsl_code);
             }
             Err(e) => {
                 println!("Parse failed for '{}':\n{}", input, e);
