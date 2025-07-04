@@ -6,7 +6,7 @@ extern crate pest_derive;
 use num_complex::Complex;
 
 use pest::Parser;
-use pest::iterators::{Pairs};
+use pest::iterators::Pairs;
 use pest_derive::Parser;
 // use num_complex::Complex;
 use pest::pratt_parser::{Op, PrattParser};
@@ -302,58 +302,6 @@ fn generate_glsl(node: &AstNode) -> String {
     }
 }
 
-fn main() {
-    let inputs = vec![
-        "z * z + c",
-        "(1 + i) / (1 - i)",
-        "sqrt(-4) * 2i",
-        "conj(abs(3 + 4i))",
-        "my_func(z, c) + 2",
-    ];
-
-    println!("// GLSL Helper Functions needed by the generated code:");
-    println!("// vec2 cmul(vec2 a, vec2 b) {{ ... }}");
-    println!("// vec2 cdiv(vec2 a, vec2 b) {{ ... }}");
-    println!("// vec2 csqrt(vec2 z) {{ ... }}");
-    println!("// float sinh(float x) {{ return 0.5 * (exp(x) - exp(-x)); }}");
-    println!("// float cosh(float x) {{ return 0.5 * (exp(x) + exp(-x)); }}");
-    println!("// vec2 cexp(vec2 z) {{ return exp(z.x) * vec2(cos(z.y), sin(z.y)); }}");
-    println!("// vec2 csin(vec2 z) {{ return vec2(sin(z.x) * cosh(z.y), cos(z.x) * sinh(z.y)); }}");
-    println!(
-        "// vec2 ccos(vec2 z) {{ return vec2(cos(z.x) * cosh(z.y), -sin(z.x) * sinh(z.y)); }}"
-    );
-    println!("// vec2 ctan(vec2 z) {{ return cdiv(csin(z), ccos(z)); }}");
-
-    for input in inputs {
-        println!("--------------------");
-        match MyComplex::parse(Rule::calculation, input) {
-            Ok(mut pairs) => {
-                // `find`は `calculation` の子要素から `expr` を探す
-                let expression = pairs
-                    .next()
-                    .unwrap()
-                    .into_inner()
-                    .find(|p| p.as_rule() == Rule::expr)
-                    .unwrap();
-                // `expr` の子要素を `parse_to_ast` に渡す
-                let ast = parse_to_ast(expression.into_inner());
-
-                println!("Input:         {}", input);
-                println!("Original AST:  {}", ast);
-
-                let optimized_ast = optimize_ast(&ast);
-                println!("Optimized AST: {}", optimized_ast);
-
-                // GLSLコードを生成
-                let glsl_code = generate_glsl(&optimized_ast);
-                println!("GLSL Output:   {}", glsl_code);
-            }
-            Err(e) => {
-                println!("Parse failed for '{}':\n{}", input, e);
-            }
-        }
-    }
-}
 // --- WASMから呼び出される公開関数 ---
 
 /// パニック時にコンソールに詳細なエラーを出力するための初期設定
