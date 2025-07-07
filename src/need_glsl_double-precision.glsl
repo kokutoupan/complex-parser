@@ -213,9 +213,9 @@ mat2 dcdiv(mat2 a, mat2 b) {
 // 平方根: sqrt(a)
 mat2 dcsqrt(mat2 a) {
     vec2 r = dcabs(a);
-    vec2 half = vec2(0.5, 0.0);
-    vec2 sr = dsqrt(dmul(dadd(r, a[0]), half));
-    vec2 si = dsqrt(dmul(dsub(r, a[0]), half));
+    vec2 half_v = vec2(0.5, 0.0);
+    vec2 sr = dsqrt(dmul(dadd(r, a[0]), half_v));
+    vec2 si = dsqrt(dmul(dsub(r, a[0]), half_v));
     if (a[1].x < 0.0) {
         si = dneg(si);
     }
