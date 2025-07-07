@@ -302,6 +302,84 @@ fn generate_glsl(node: &AstNode) -> String {
     }
 }
 
+
+fn generate_glsl_dd(node: &AstNode) -> String {
+    match node {
+        AstNode::ComplexNumber(c) => {
+            // f64をGLSLのfloatリテラル文字列に変換するヘルパー関数
+            let to_glsl_float = |val: f64| -> String {
+                if val.abs() < 1e-9 {
+                    return "0.0".to_string();
+                }
+                let s = format!("{}", val);
+                if !s.contains('.') && !s.contains('e') {
+                    format!("{}.0", s)
+                } else {
+                    s
+                }
+            };
+
+            let re_str = to_glsl_float(c.re);
+            let im_str = to_glsl_float(c.im);
+
+            // 倍々精度複素数リテラル (mat2)として生成
+            // d_real = vec2(val, 0.0), d_imag = vec2(val, 0.0)
+            format!(
+                "mat2(vec2({}, 0.0), vec2({}, 0.0))",
+                re_str, im_str
+            )
+        }
+        AstNode::Variable(name) => name.clone(), // 変数名はそのまま使用 (シェーダ側でmat2型と仮定)
+        AstNode::FunctionCall { name, args } => {
+            let glsl_args: Vec<String> = args.iter().map(generate_glsl_dd).collect();
+            
+            // 関数呼び出しを倍々精度複素数用の `dc...` 関数にマッピング
+            match (name.as_str(), glsl_args.as_slice()) {
+                // 実数値を返す関数は、結果を純粋な実複素数(mat2)に変換する
+                ("abs", [arg]) => format!("mat2(dcabs({}), vec2(0.0))", arg),
+                ("real", [arg]) => format!("mat2(({})[0], vec2(0.0))", arg),
+                ("imag", [arg]) => format!("mat2(({})[1], vec2(0.0))", arg),
+                
+                // 複素数を返す関数
+                ("conj", [arg]) => format!("dcconj({})", arg),
+                ("sqrt", [arg]) => format!("dcsqrt({})", arg),
+                ("sin", [arg]) => format!("dcsin({})", arg),
+                ("cos", [arg]) => format!("dccos({})", arg),
+                ("tan", [arg]) => format!("dctan({})", arg),
+                ("exp", [arg]) => format!("dcexp({})", arg),
+                ("ln", [arg]) | ("log", [arg]) => format!("dcln({})", arg),
+                ("asin", [arg]) | ("arcsin", [arg]) => format!("dcasin({})", arg), // GLSL側に関数の実装が必要
+                ("acos", [arg]) | ("arccos", [arg]) => format!("dcacos({})", arg), // GLSL側に関数の実装が必要
+                ("atan", [arg]) | ("arctan", [arg]) => format!("dcatan({})", arg), // GLSL側に関数の実装が必要
+                ("pow", [base, exponent]) => format!("dcpow({}, {})", base, exponent),
+                
+                // 不明な関数はそのまま出力
+                _ => format!("{}({})", name, glsl_args.join(", ")),
+            }
+        }
+        AstNode::UnaryOp { op, child } => {
+            let child_glsl = generate_glsl_dd(child);
+            match op {
+                Rule::neg_op => format!("dcneg({})", child_glsl), // 単項マイナス
+                Rule::pos_op => child_glsl, // 単項プラスは何もしない
+                _ => unreachable!(),
+            }
+        }
+        AstNode::BinaryOp { op, lhs, rhs } => {
+            let lhs_glsl = generate_glsl_dd(lhs);
+            let rhs_glsl = generate_glsl_dd(rhs);
+
+            // 二項演算子を倍々精度複素数用の `dc...` 関数にマッピング
+            match op {
+                Rule::add_op => format!("dcadd({}, {})", lhs_glsl, rhs_glsl),
+                Rule::sub_op => format!("dcsub({}, {})", lhs_glsl, rhs_glsl),
+                Rule::mul_op => format!("dcmul({}, {})", lhs_glsl, rhs_glsl),
+                Rule::div_op => format!("dcdiv({}, {})", lhs_glsl, rhs_glsl),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
 // --- WASMから呼び出される公開関数 ---
 
 /// パニック時にコンソールに詳細なエラーを出力するための初期設定
@@ -326,6 +404,28 @@ pub fn get_glsl_output(input: &str) -> String {
             let ast = parse_to_ast(expression.into_inner());
             let optimized_ast = optimize_ast(&ast);
             generate_glsl(&optimized_ast)
+        }
+        Err(e) => {
+            // パースエラーの場合は、その内容を文字列として返す
+            format!("Parse Error:\n{}", e)
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn get_glsl_output_dd(input: &str) -> String {
+    // 入力が空なら何も返さない
+    if input.trim().is_empty() {
+        return "".to_string();
+    }
+
+    // これまでmain関数で行っていた処理を実行
+    match MyComplex::parse(Rule::calculation, input) {
+        Ok(mut pairs) => {
+            let expression = pairs.next().unwrap().into_inner().find(|p| p.as_rule() == Rule::expr).unwrap();
+            let ast = parse_to_ast(expression.into_inner());
+            let optimized_ast = optimize_ast(&ast);
+            generate_glsl_dd(&optimized_ast)
         }
         Err(e) => {
             // パースエラーの場合は、その内容を文字列として返す
