@@ -120,6 +120,7 @@ fn parse_to_ast(pairs: Pairs<Rule>) -> AstNode {
             Rule::variable => match primary.as_str() {
                 "i" => AstNode::ComplexNumber(Complex::i()),
                 "pi" => AstNode::ComplexNumber(Complex::new(std::f64::consts::PI, 0.0)),
+                "e" => AstNode::ComplexNumber(Complex::new(std::f64::consts::E, 0.0)),
                 name => AstNode::Variable(name.to_string()),
             },
             Rule::function_call => {
