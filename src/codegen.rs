@@ -1,139 +1,386 @@
-use crate::ast::{AstNode, BinaryOp, UnaryOp};
+use crate::ast::{BinaryOp, UnaryOp};
+use crate::typing::{DataType, TypedAst}; // 変更
 
-pub fn generate_glsl(node: &AstNode) -> String {
+pub trait CodegenBackend {
+    fn format_real_literal(&self, val: f64) -> String;
+    fn format_complex_literal(&self, re: f64, im: f64) -> String;
+    fn format_variable(&self, name: &str) -> String;
+    fn format_cast_to_complex(&self, child_str: &str) -> String;
+
+    // 引数の型を変更
+    fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String;
+    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String;
+
+    fn format_function_call(&self, name: &str, args: &[String], ty: DataType) -> String;
+}
+
+pub fn generate_code(node: &TypedAst, backend: &impl CodegenBackend) -> String {
     match node {
-        AstNode::ComplexNumber(c) => {
-            // f64をGLSLのfloatリテラル文字列に変換するヘルパー関数
-            let to_glsl_float = |val: f64| -> String {
-                if val.abs() < 1e-9 {
-                    return "0.0".to_string();
-                }
-                let s = format!("{}", val);
-                if !s.contains('.') && !s.contains('e') {
-                    format!("{}.0", s)
-                } else {
-                    s
-                }
-            };
-
-            let re_str = to_glsl_float(c.re);
-            let im_str = to_glsl_float(c.im);
-
-            format!("vec2({}, {})", re_str, im_str)
+        TypedAst::Literal { value, ty } => match ty {
+            DataType::Real => backend.format_real_literal(value.re),
+            DataType::Complex => backend.format_complex_literal(value.re, value.im),
+        },
+        TypedAst::Variable { name, .. } => backend.format_variable(name),
+        TypedAst::CastToComplex { child } => {
+            let c = generate_code(child, backend);
+            backend.format_cast_to_complex(&c)
         }
-        AstNode::Variable(name) => name.clone(), // 変数名はそのまま使用
-        AstNode::FunctionCall { name, args } => {
-            let glsl_args: Vec<String> = args.iter().map(generate_glsl).collect();
-            match (name.as_str(), glsl_args.as_slice()) {
-                ("abs", [arg]) => format!("vec2(length({}), 0.0)", arg),
-                ("real", [arg]) => format!("vec2(({}).x, 0.0)", arg),
-                ("imag", [arg]) => format!("vec2(({}).y, 0.0)", arg),
-                ("conj", [arg]) => format!("vec2(({}).x, -({}).y)", arg, arg),
-                ("sqrt", [arg]) => format!("csqrt({})", arg),
-                ("sin", [arg]) => format!("csin({})", arg),
-                ("cos", [arg]) => format!("ccos({})", arg),
-                ("tan", [arg]) => format!("ctan({})", arg),
-                ("exp", [arg]) => format!("cexp({})", arg),
-                ("ln", [arg]) | ("log", [arg]) => format!("clog({})", arg),
-                ("asin", [arg]) | ("arcsin", [arg]) => format!("casin({})", arg),
-                ("acos", [arg]) | ("arccos", [arg]) => format!("cacos({})", arg),
-                ("atan", [arg]) | ("arctan", [arg]) => format!("catan({})", arg),
-                ("pow", [base, exponent]) => format!("cpow({}, {})", base, exponent),
-                _ => format!("{}({})", name, glsl_args.join(", ")),
-            }
+        TypedAst::FunctionCall { name, args, ty } => {
+            let a: Vec<String> = args.iter().map(|arg| generate_code(arg, backend)).collect();
+            backend.format_function_call(name, &a, *ty)
         }
-        AstNode::UnaryOp { op, child } => {
-            let child_glsl = generate_glsl(child);
-            match op {
-                UnaryOp::Neg => format!("(-{})", child_glsl),
-                // 単項プラスは最適化で消えているはずだが、念のため
-                UnaryOp::Pos => child_glsl,
-            }
+        TypedAst::UnaryOp { op, child, ty } => {
+            let c = generate_code(child, backend);
+            backend.format_unary_op(*op, &c, *ty)
         }
-        AstNode::BinaryOp { op, lhs, rhs } => {
-            let lhs_glsl = generate_glsl(lhs);
-            let rhs_glsl = generate_glsl(rhs);
-            // 演算子の優先順位を考慮し、常に括弧で囲むのが安全
-            match op {
-                BinaryOp::Add => format!("({} + {})", lhs_glsl, rhs_glsl),
-                BinaryOp::Sub => format!("({} - {})", lhs_glsl, rhs_glsl),
-                // 複素数の乗算・除算はヘルパー関数を呼び出す
-                BinaryOp::Mul => format!("cmul({}, {})", lhs_glsl, rhs_glsl),
-                BinaryOp::Div => format!("cdiv({}, {})", lhs_glsl, rhs_glsl),
-            }
+        TypedAst::BinaryOp { op, lhs, rhs, ty } => {
+            let l = generate_code(lhs, backend);
+            let r = generate_code(rhs, backend);
+            backend.format_binary_op(*op, &l, &r, *ty)
         }
     }
 }
 
-pub fn generate_glsl_dd(node: &AstNode) -> String {
-    match node {
-        AstNode::ComplexNumber(c) => {
-            // f64をGLSLのfloatリテラル文字列に変換するヘルパー関数
-            let to_glsl_float = |val: f64| -> String {
-                if val.abs() < 1e-9 {
-                    return "0.0".to_string();
-                }
-                let s = format!("{}", val);
-                if !s.contains('.') && !s.contains('e') {
-                    format!("{}.0", s)
-                } else {
-                    s
-                }
-            };
+// --- GlslBackend の実装 (Single Precision) ---
 
-            let re_str = to_glsl_float(c.re);
-            let im_str = to_glsl_float(c.im);
+pub struct GlslBackend;
 
-            // 倍々精度複素数リテラル (mat2)として生成
-            // d_real = vec2(val, 0.0), d_imag = vec2(val, 0.0)
-            format!("mat2(vec2({}, 0.0), vec2({}, 0.0))", re_str, im_str)
+impl CodegenBackend for GlslBackend {
+    fn format_real_literal(&self, val: f64) -> String {
+        let s = format!("{}", val);
+        if !s.contains('.') && !s.contains('e') {
+            format!("{}.0", s)
+        } else {
+            s
         }
-        AstNode::Variable(name) => name.clone(), // 変数名はそのまま使用 (シェーダ側でmat2型と仮定)
-        AstNode::FunctionCall { name, args } => {
-            let glsl_args: Vec<String> = args.iter().map(generate_glsl_dd).collect();
+    }
 
-            // 関数呼び出しを倍々精度複素数用の `dc...` 関数にマッピング
-            match (name.as_str(), glsl_args.as_slice()) {
-                // 実数値を返す関数は、結果を純粋な実複素数(mat2)に変換する
-                ("abs", [arg]) => format!("mat2(dcabs({}), vec2(0.0))", arg),
-                ("real", [arg]) => format!("mat2(({})[0], vec2(0.0))", arg),
-                ("imag", [arg]) => format!("mat2(({})[1], vec2(0.0))", arg),
+    fn format_complex_literal(&self, re: f64, im: f64) -> String {
+        let re_s = self.format_real_literal(re);
+        let im_s = self.format_real_literal(im);
+        format!("vec2({}, {})", re_s, im_s)
+    }
 
-                // 複素数を返す関数
-                ("conj", [arg]) => format!("dcconj({})", arg),
-                ("sqrt", [arg]) => format!("dcsqrt({})", arg),
-                ("sin", [arg]) => format!("dcsin({})", arg),
-                ("cos", [arg]) => format!("dccos({})", arg),
-                ("tan", [arg]) => format!("dctan({})", arg),
-                ("exp", [arg]) => format!("dcexp({})", arg),
-                ("ln", [arg]) | ("log", [arg]) => format!("dcln({})", arg),
-                ("asin", [arg]) | ("arcsin", [arg]) => format!("dcasin({})", arg), // GLSL側に関数の実装が必要
-                ("acos", [arg]) | ("arccos", [arg]) => format!("dcacos({})", arg), // GLSL側に関数の実装が必要
-                ("atan", [arg]) | ("arctan", [arg]) => format!("dcatan({})", arg), // GLSL側に関数の実装が必要
-                ("pow", [base, exponent]) => format!("dcpow({}, {})", base, exponent),
+    fn format_variable(&self, name: &str) -> String {
+        name.to_string()
+    }
 
-                // 不明な関数はそのまま出力
-                _ => format!("{}({})", name, glsl_args.join(", ")),
-            }
+    fn format_cast_to_complex(&self, child_str: &str) -> String {
+        format!("vec2({}, 0.0)", child_str)
+    }
+
+    fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String {
+        match ty {
+            DataType::Real => match op {
+                BinaryOp::Add => format!("({} + {})", lhs, rhs),
+                BinaryOp::Sub => format!("({} - {})", lhs, rhs),
+                BinaryOp::Mul => format!("({} * {})", lhs, rhs),
+                BinaryOp::Div => format!("({} / {})", lhs, rhs),
+            },
+            DataType::Complex => match op {
+                BinaryOp::Add => format!("({} + {})", lhs, rhs),
+                BinaryOp::Sub => format!("({} - {})", lhs, rhs),
+                BinaryOp::Mul => format!("cmul({}, {})", lhs, rhs),
+                BinaryOp::Div => format!("cdiv({}, {})", lhs, rhs),
+            },
         }
-        AstNode::UnaryOp { op, child } => {
-            let child_glsl = generate_glsl_dd(child);
-            match op {
-                UnaryOp::Neg => format!("dcneg({})", child_glsl), // 単項マイナス
-                UnaryOp::Pos => child_glsl,                       // 単項プラスは何もしない
-            }
-        }
-        AstNode::BinaryOp { op, lhs, rhs } => {
-            let lhs_glsl = generate_glsl_dd(lhs);
-            let rhs_glsl = generate_glsl_dd(rhs);
+    }
 
-            // 二項演算子を倍々精度複素数用の `dc...` 関数にマッピング
-            match op {
-                BinaryOp::Add => format!("dcadd({}, {})", lhs_glsl, rhs_glsl),
-                BinaryOp::Sub => format!("dcsub({}, {})", lhs_glsl, rhs_glsl),
-                BinaryOp::Mul => format!("dcmul({}, {})", lhs_glsl, rhs_glsl),
-                BinaryOp::Div => format!("dcdiv({}, {})", lhs_glsl, rhs_glsl),
-            }
+    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+        match op {
+            UnaryOp::Neg => format!("(-{})", child),
+            UnaryOp::Pos => child.to_string(),
         }
+    }
+
+    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
+        let func_name = match name {
+            "abs" | "length" | "norm" => "length", // vec2(Real)を返す
+            "real" => return format!("({}).x", args[0]),
+            "imag" => return format!("({}).y", args[0]),
+            "sin" => "csin",
+            "cos" => "ccos",
+            "tan" => "ctan",
+            "exp" => "cexp",
+            "ln" | "log" => "clog",
+            "sqrt" => "csqrt",
+            "conj" => "cconj",
+            "pow" => "cpow",
+            _ => name,
+        };
+        format!("{}({})", func_name, args.join(", "))
+    }
+}
+
+// --- GlslDoubleBackend の実装修正 ---
+
+pub struct GlslDoubleBackend;
+
+impl CodegenBackend for GlslDoubleBackend {
+    fn format_real_literal(&self, val: f64) -> String {
+        let s = format!("{}", val);
+        let s = if !s.contains('.') && !s.contains('e') {
+            format!("{}.0", s)
+        } else {
+            s
+        };
+        format!("vec2({}, 0.0)", s)
+    }
+
+    fn format_complex_literal(&self, re: f64, im: f64) -> String {
+        let re_s = format!("{}", re);
+        let re_s = if !re_s.contains('.') && !re_s.contains('e') {
+            format!("{}.0", re_s)
+        } else {
+            re_s
+        };
+        let im_s = format!("{}", im);
+        let im_s = if !im_s.contains('.') && !im_s.contains('e') {
+            format!("{}.0", im_s)
+        } else {
+            im_s
+        };
+        format!("mat2(vec2({}, 0.0), vec2({}, 0.0))", re_s, im_s)
+    }
+
+    fn format_variable(&self, name: &str) -> String {
+        name.to_string()
+    }
+
+    fn format_cast_to_complex(&self, child_str: &str) -> String {
+        format!("mat2({}, vec2(0.0))", child_str)
+    }
+
+    fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String {
+        match ty {
+            DataType::Real => match op {
+                BinaryOp::Add => format!("dadd({}, {})", lhs, rhs),
+                BinaryOp::Sub => format!("dsub({}, {})", lhs, rhs),
+                BinaryOp::Mul => format!("dmul({}, {})", lhs, rhs),
+                BinaryOp::Div => format!("ddiv({}, {})", lhs, rhs),
+            },
+            DataType::Complex => match op {
+                BinaryOp::Add => format!("dcadd({}, {})", lhs, rhs),
+                BinaryOp::Sub => format!("dcsub({}, {})", lhs, rhs),
+                BinaryOp::Mul => format!("dcmul({}, {})", lhs, rhs),
+                BinaryOp::Div => format!("dcdiv({}, {})", lhs, rhs),
+            },
+        }
+    }
+
+    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+        match op {
+            UnaryOp::Neg => match ty {
+                DataType::Real => format!("dneg({})", child),
+                DataType::Complex => format!("dcneg({})", child),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
+        let func_name = match name {
+            "abs" | "length" | "norm" => "dcabs",
+            "real" => return format!("vec2(({})[0])", args[0]),
+            "imag" => return format!("vec2(({})[1])", args[0]),
+            "sin" => "dcsin",
+            "cos" => "dccos",
+            "tan" => "dctan",
+            "exp" => "dcexp",
+            "ln" | "log" => "dcln",
+            "sqrt" => "dcsqrt",
+            "conj" => "dcconj",
+            "pow" => "dcpow",
+            _ => name,
+        };
+        format!("{}({})", func_name, args.join(", "))
+    }
+}
+
+pub struct WgslBackend;
+
+impl CodegenBackend for WgslBackend {
+    fn format_real_literal(&self, val: f64) -> String {
+        // WGSL: f32 (または f64 が使える環境なら f64)
+        // WebGPU標準では f32 が基本なので、一旦 f32 として出力します
+        // 必要なら "f32" を "f64" に置換できるようにするか、設定を持たせます
+        let s = format!("{}", val);
+        if !s.contains('.') && !s.contains('e') {
+            format!("{}.0", s)
+        } else {
+            s
+        }
+    }
+
+    fn format_complex_literal(&self, re: f64, im: f64) -> String {
+        // WGSL: vec2<f32>(re, im)
+        // エイリアス vec2f も使えますが、冗長に vec2<f32> と書くのが無難です
+        let re_s = self.format_real_literal(re);
+        let im_s = self.format_real_literal(im);
+        format!("vec2<f32>({}, {})", re_s, im_s)
+    }
+
+    fn format_variable(&self, name: &str) -> String {
+        name.to_string()
+    }
+
+    fn format_cast_to_complex(&self, child_str: &str) -> String {
+        // 実数(float) -> 複素数(vec2<f32>)
+        // vec2<f32>(val, 0.0)
+        format!("vec2<f32>({}, 0.0)", child_str)
+    }
+
+    fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String {
+        match ty {
+            DataType::Real => match op {
+                // 実数同士なら標準演算子が使える
+                BinaryOp::Add => format!("({} + {})", lhs, rhs),
+                BinaryOp::Sub => format!("({} - {})", lhs, rhs),
+                BinaryOp::Mul => format!("({} * {})", lhs, rhs),
+                BinaryOp::Div => format!("({} / {})", lhs, rhs),
+            },
+            DataType::Complex => match op {
+                // 複素数同士はユーザー定義関数が必要 (cmulなど)
+                // WGSLは演算子オーバーロードがないため関数呼び出し必須
+                BinaryOp::Add => format!("({} + {})", lhs, rhs), // vec2同士の足し算は成分ごと
+                BinaryOp::Sub => format!("({} - {})", lhs, rhs), // 引き算もOK
+                BinaryOp::Mul => format!("cmul({}, {})", lhs, rhs), // 掛け算は関数
+                BinaryOp::Div => format!("cdiv({}, {})", lhs, rhs), // 割り算も関数
+            },
+        }
+    }
+
+    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+        match op {
+            UnaryOp::Neg => format!("(-{})", child), // vec2の反転も標準対応
+            _ => unreachable!(),
+        }
+    }
+
+    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
+        let func_name = match name {
+            "abs" | "length" | "norm" => "length", // WGSL標準関数
+            "real" => return format!("({}).x", args[0]),
+            "imag" => return format!("({}).y", args[0]),
+            // 以下はユーザー定義関数(need_wgsl_head.wgsl)が必要
+            "sin" => "csin",
+            "cos" => "ccos",
+            "tan" => "ctan",
+            "exp" => "cexp",
+            "ln" | "log" => "clog",
+            "sqrt" => "csqrt",
+            "conj" => "cconj",
+            "pow" => "cpow",
+            _ => name,
+        };
+        format!("{}({})", func_name, args.join(", "))
+    }
+}
+
+// ★ ヘルパー関数: f64 を 上位(Hi) と 下位(Lo) の f32 に分割する
+// これにより、Rustのf64精度を損なわずにシェーダの "Emulated Double" に渡せます
+fn split_f64(val: f64) -> (f32, f32) {
+    if val == 0.0 {
+        return (0.0, 0.0);
+    }
+    let hi = val as f32;
+    let lo = (val - hi as f64) as f32;
+    (hi, lo)
+}
+
+// WGSL用の f32 文字列生成 ("1.0", "0.5" など)
+fn to_wgsl_f32(val: f32) -> String {
+    let s = format!("{}", val);
+    if !s.contains('.') && !s.contains('e') {
+        format!("{}.0", s)
+    } else {
+        s
+    }
+}
+
+// --- WgslDoubleBackendの実装 ---
+
+pub struct WgslDoubleBackend;
+
+impl CodegenBackend for WgslDoubleBackend {
+    fn format_real_literal(&self, val: f64) -> String {
+        // f64 -> vec2<f32>(hi, lo)
+        let (hi, lo) = split_f64(val);
+        format!("vec2<f32>({}, {})", to_wgsl_f32(hi), to_wgsl_f32(lo))
+    }
+
+    fn format_complex_literal(&self, re: f64, im: f64) -> String {
+        // f64 complex -> mat2x2<f32>( real_vec, imag_vec )
+        let (re_hi, re_lo) = split_f64(re);
+        let (im_hi, im_lo) = split_f64(im);
+
+        // WGSLの行列コンストラクタは列(Column)ごとに指定します
+        // mat2x2<f32>(col0, col1) -> col0が実部, col1が虚部
+        format!(
+            "mat2x2<f32>(vec2<f32>({}, {}), vec2<f32>({}, {}))",
+            to_wgsl_f32(re_hi),
+            to_wgsl_f32(re_lo),
+            to_wgsl_f32(im_hi),
+            to_wgsl_f32(im_lo)
+        )
+    }
+
+    fn format_variable(&self, name: &str) -> String {
+        name.to_string()
+    }
+
+    fn format_cast_to_complex(&self, child_str: &str) -> String {
+        // Real(vec2) -> Complex(mat2x2)
+        // 虚部は 0.0 (Hi=0, Lo=0)
+        format!("mat2x2<f32>({}, vec2<f32>(0.0, 0.0))", child_str)
+    }
+
+    fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String {
+        // 関数名は GLSL Double 版 (dcaddなど) と合わせるか、WGSL用に prefix を変えるか決められます。
+        // ここでは GLSL版と同じ名前の関数が WGSL でも定義されていると仮定します。
+        match ty {
+            DataType::Real => match op {
+                BinaryOp::Add => format!("dadd({}, {})", lhs, rhs),
+                BinaryOp::Sub => format!("dsub({}, {})", lhs, rhs),
+                BinaryOp::Mul => format!("dmul({}, {})", lhs, rhs),
+                BinaryOp::Div => format!("ddiv({}, {})", lhs, rhs),
+            },
+            DataType::Complex => match op {
+                BinaryOp::Add => format!("dcadd({}, {})", lhs, rhs),
+                BinaryOp::Sub => format!("dcsub({}, {})", lhs, rhs),
+                BinaryOp::Mul => format!("dcmul({}, {})", lhs, rhs),
+                BinaryOp::Div => format!("dcdiv({}, {})", lhs, rhs),
+            },
+        }
+    }
+
+    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+        match op {
+            UnaryOp::Neg => match ty {
+                DataType::Real => format!("dneg({})", child),
+                DataType::Complex => format!("dcneg({})", child),
+            },
+            UnaryOp::Pos => child.to_string(),
+        }
+    }
+
+    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
+        // 関数マッピング (GLSL Double とほぼ同じ)
+        let func_name = match name {
+            "abs" | "length" | "norm" => "dcabs", // vec2(Real)を返す
+            "real" => return format!("({}[0])", args[0]), // mat2の0列目
+            "imag" => return format!("({}[1])", args[0]), // mat2の1列目
+
+            "sin" => "dcsin",
+            "cos" => "dccos",
+            "tan" => "dctan",
+            "exp" => "dcexp",
+            "ln" | "log" => "dcln",
+            "sqrt" => "dcsqrt",
+            "conj" => "dcconj",
+            "pow" => "dcpow",
+            _ => name,
+        };
+        format!("{}({})", func_name, args.join(", "))
     }
 }

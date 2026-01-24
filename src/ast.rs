@@ -1,6 +1,12 @@
 use num_complex::Complex;
 use std::fmt;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataType {
+    Real,    // GLSL: float, Double: vec2
+    Complex, // GLSL: vec2,  Double: mat2
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Pos,
