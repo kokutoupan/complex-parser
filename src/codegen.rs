@@ -1,3 +1,5 @@
+use std::fmt::format;
+
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::typing::{DataType, TypedAst}; // 変更
 
@@ -11,7 +13,13 @@ pub trait CodegenBackend {
     fn format_binary_op(&self, op: BinaryOp, lhs: &str, rhs: &str, ty: DataType) -> String;
     fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String;
 
-    fn format_function_call(&self, name: &str, args: &[String], ty: DataType) -> String;
+    fn format_function_call(
+        &self,
+        name: &str,
+        args: &[String],
+        arg_types: &[DataType],
+        ty: DataType,
+    ) -> String;
 }
 
 pub fn generate_code(node: &TypedAst, backend: &impl CodegenBackend) -> String {
@@ -26,8 +34,11 @@ pub fn generate_code(node: &TypedAst, backend: &impl CodegenBackend) -> String {
             backend.format_cast_to_complex(&c)
         }
         TypedAst::FunctionCall { name, args, ty } => {
-            let a: Vec<String> = args.iter().map(|arg| generate_code(arg, backend)).collect();
-            backend.format_function_call(name, &a, *ty)
+            let (arg_strs, arg_types): (Vec<String>, Vec<DataType>) = args
+                .iter()
+                .map(|arg| (generate_code(arg, backend), arg.get_type()))
+                .unzip();
+            backend.format_function_call(name, &arg_strs, &arg_types, *ty)
         }
         TypedAst::UnaryOp { op, child, ty } => {
             let c = generate_code(child, backend);
@@ -93,22 +104,30 @@ impl CodegenBackend for GlslBackend {
         }
     }
 
-    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
-        let func_name = match name {
-            "abs" | "length" | "norm" => "length", // vec2(Real)を返す
+    fn format_function_call(
+        &self,
+        name: &str,
+        args: &[String],
+        arg_types: &[DataType],
+        _ty: DataType,
+    ) -> String {
+        let is_arg_complex = arg_types
+            .first()
+            .map(|t| *t == DataType::Complex)
+            .unwrap_or(false);
+
+        match name {
+            "abs" | "length" | "norm" => return format!("length({})", args.join(", ")),
             "real" => return format!("({}).x", args[0]),
             "imag" => return format!("({}).y", args[0]),
-            "sin" => "csin",
-            "cos" => "ccos",
-            "tan" => "ctan",
-            "exp" => "cexp",
-            "ln" | "log" => "clog",
-            "sqrt" => "csqrt",
-            "conj" => "cconj",
-            "pow" => "cpow",
-            _ => name,
-        };
-        format!("{}({})", func_name, args.join(", "))
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+                let prefix = if is_arg_complex { "c" } else { "" };
+                // log -> clog, ln -> clog
+                let base_name = if name == "ln" { "log" } else { name };
+                format!("{}{}({})", prefix, base_name, args.join(", "))
+            }
+            _ => format!("{}({})", name, args.join(", ")),
+        }
     }
 }
 
@@ -178,22 +197,29 @@ impl CodegenBackend for GlslDoubleBackend {
         }
     }
 
-    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
-        let func_name = match name {
-            "abs" | "length" | "norm" => "dcabs",
+    fn format_function_call(
+        &self,
+        name: &str,
+        args: &[String],
+        arg_types: &[DataType],
+        _ty: DataType,
+    ) -> String {
+        let is_arg_complex = arg_types
+            .first()
+            .map(|t| *t == DataType::Complex)
+            .unwrap_or(false);
+
+        match name {
+            "abs" | "length" | "norm" => return format!("dcabs({})", args.join(", ")),
             "real" => return format!("vec2(({})[0])", args[0]),
             "imag" => return format!("vec2(({})[1])", args[0]),
-            "sin" => "dcsin",
-            "cos" => "dccos",
-            "tan" => "dctan",
-            "exp" => "dcexp",
-            "ln" | "log" => "dcln",
-            "sqrt" => "dcsqrt",
-            "conj" => "dcconj",
-            "pow" => "dcpow",
-            _ => name,
-        };
-        format!("{}({})", func_name, args.join(", "))
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+                let prefix = if is_arg_complex { "dc" } else { "d" };
+                let base_name = if name == "ln" { "log" } else { name };
+                format!("{}{}({})", prefix, base_name, args.join(", "))
+            }
+            _ => format!("{}({})", name, args.join(", ")),
+        }
     }
 }
 
@@ -257,23 +283,33 @@ impl CodegenBackend for WgslBackend {
         }
     }
 
-    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
-        let func_name = match name {
-            "abs" | "length" | "norm" => "length", // WGSL標準関数
+    fn format_function_call(
+        &self,
+        name: &str,
+        args: &[String],
+        arg_types: &[DataType],
+        _ty: DataType,
+    ) -> String {
+        let is_arg_complex = arg_types
+            .first()
+            .map(|t| *t == DataType::Complex)
+            .unwrap_or(false);
+
+        match name {
+            "abs" | "length" | "norm" => return format!("length({})", args.join(", ")),
             "real" => return format!("({}).x", args[0]),
             "imag" => return format!("({}).y", args[0]),
-            // 以下はユーザー定義関数(need_wgsl_head.wgsl)が必要
-            "sin" => "csin",
-            "cos" => "ccos",
-            "tan" => "ctan",
-            "exp" => "cexp",
-            "ln" | "log" => "clog",
-            "sqrt" => "csqrt",
-            "conj" => "cconj",
-            "pow" => "cpow",
-            _ => name,
-        };
-        format!("{}({})", func_name, args.join(", "))
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+                // Realなら標準関数 (例: sin), Complexなら csin
+                let base_name = if name == "ln" { "log" } else { name };
+                if is_arg_complex {
+                    format!("c{}({})", base_name, args.join(", "))
+                } else {
+                    format!("{}({})", base_name, args.join(", "))
+                }
+            }
+            _ => format!("{}({})", name, args.join(", ")),
+        }
     }
 }
 
@@ -364,23 +400,29 @@ impl CodegenBackend for WgslDoubleBackend {
         }
     }
 
-    fn format_function_call(&self, name: &str, args: &[String], _ty: DataType) -> String {
-        // 関数マッピング (GLSL Double とほぼ同じ)
-        let func_name = match name {
-            "abs" | "length" | "norm" => "dcabs", // vec2(Real)を返す
-            "real" => return format!("({}[0])", args[0]), // mat2の0列目
-            "imag" => return format!("({}[1])", args[0]), // mat2の1列目
+    fn format_function_call(
+        &self,
+        name: &str,
+        args: &[String],
+        arg_types: &[DataType],
+        _ty: DataType,
+    ) -> String {
+        let is_arg_complex = arg_types
+            .first()
+            .map(|t| *t == DataType::Complex)
+            .unwrap_or(false);
 
-            "sin" => "dcsin",
-            "cos" => "dccos",
-            "tan" => "dctan",
-            "exp" => "dcexp",
-            "ln" | "log" => "dcln",
-            "sqrt" => "dcsqrt",
-            "conj" => "dcconj",
-            "pow" => "dcpow",
-            _ => name,
-        };
-        format!("{}({})", func_name, args.join(", "))
+        match name {
+            "abs" | "length" | "norm" => return format!("dcabs({})", args.join(", ")),
+            "real" => return format!("({}[0])", args[0]),
+            "imag" => return format!("({}[1])", args[0]),
+
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+                let prefix = if is_arg_complex { "dc" } else { "d" };
+                let base_name = if name == "ln" { "log" } else { name };
+                format!("{}{}({})", prefix, base_name, args.join(", "))
+            }
+            _ => format!("{}({})", name, args.join(", ")),
+        }
     }
 }

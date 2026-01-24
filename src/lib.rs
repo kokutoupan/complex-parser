@@ -166,9 +166,9 @@ mod tests {
 
     #[test]
     fn test_function_call() {
-        let input = "sin(z)";
+        let input = "sin(real(z))";
         let output = get_glsl_output(input);
-        assert_eq!(output, "csin(z)");
+        assert_eq!(output, "sin((z).x)");
     }
 
     #[test]
@@ -326,5 +326,12 @@ mod tests {
         let output = get_wgsl_output_dd(input);
 
         assert!(output.contains("mat2x2<f32>"));
+    }
+
+    #[test]
+    fn test_wgsl_dd_function_call() {
+        let input = "sin(real(z))";
+        let output = get_wgsl_output_dd(input);
+        assert_eq!(output, "dsin((z[0]))");
     }
 }
