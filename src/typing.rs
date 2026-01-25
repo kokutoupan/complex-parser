@@ -72,8 +72,26 @@ pub fn type_check(node: &AstNode) -> TypedAst {
         },
         AstNode::FunctionCall { name, args } => {
             let typed_args: Vec<TypedAst> = args.iter().map(type_check).collect();
+            // 第1引数の型を取得 (引数がない場合はComplexとしておく)
+            let first_arg_type = typed_args
+                .first()
+                .map(|a| a.get_type())
+                .unwrap_or(DataType::Complex);
             let ty = match name.as_str() {
                 "abs" | "norm" | "length" | "real" | "imag" | "arg" => DataType::Real,
+                // 2. 入力の型を引き継ぐ関数 (Real->Real, Complex->Complex)
+                "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "asin"
+                | "acos" | "atan" | "arcsin" | "arccos" | "arctan" => first_arg_type,
+
+                // 3. pow は引数のどちらかがComplexならComplex、両方RealならReal
+                "pow" => {
+                    if typed_args.iter().any(|a| a.get_type() == DataType::Complex) {
+                        DataType::Complex
+                    } else {
+                        DataType::Real
+                    }
+                }
+                // 4. それ以外はComplex
                 _ => DataType::Complex,
             };
             TypedAst::FunctionCall {

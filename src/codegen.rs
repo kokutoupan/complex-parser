@@ -1,5 +1,3 @@
-use std::fmt::format;
-
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::typing::{DataType, TypedAst}; // 変更
 
@@ -97,7 +95,7 @@ impl CodegenBackend for GlslBackend {
         }
     }
 
-    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+    fn format_unary_op(&self, op: UnaryOp, child: &str, _ty: DataType) -> String {
         match op {
             UnaryOp::Neg => format!("(-{})", child),
             UnaryOp::Pos => child.to_string(),
@@ -297,7 +295,7 @@ impl CodegenBackend for WgslBackend {
         }
     }
 
-    fn format_unary_op(&self, op: UnaryOp, child: &str, ty: DataType) -> String {
+    fn format_unary_op(&self, op: UnaryOp, child: &str, _ty: DataType) -> String {
         match op {
             UnaryOp::Neg => format!("(-{})", child), // vec2の反転も標準対応
             _ => unreachable!(),

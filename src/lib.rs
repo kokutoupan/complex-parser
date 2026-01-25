@@ -10,8 +10,7 @@ pub mod optimizer;
 pub mod parser;
 pub mod typing;
 
-use optimizer::optimize_ast;
-use parser::{MyComplex, Rule, parse_to_ast};
+use parser::{MyComplex, Rule};
 use pest::Parser;
 use wasm_bindgen::prelude::*;
 
@@ -330,8 +329,8 @@ mod tests {
 
     #[test]
     fn test_wgsl_dd_function_call() {
-        let input = "sin(real(z))";
+        let input = "ln(sin(real(z)))";
         let output = get_wgsl_output_dd(input);
-        assert_eq!(output, "dsin((z[0]))");
+        assert_eq!(output, "dlog(dsin((z[0])))");
     }
 }
