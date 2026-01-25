@@ -120,11 +120,21 @@ impl CodegenBackend for GlslBackend {
             "abs" | "length" | "norm" => return format!("length({})", args.join(", ")),
             "real" => return format!("({}).x", args[0]),
             "imag" => return format!("({}).y", args[0]),
-            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
-                let prefix = if is_arg_complex { "c" } else { "" };
-                // log -> clog, ln -> clog
+            "conj" => {
+                if is_arg_complex {
+                    format!("cconj({})", args[0])
+                } else {
+                    args[0].to_string() // 実数の共役はそのまま
+                }
+            }
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "pow" => {
+                // Realなら標準関数 (例: sin), Complexなら csin
                 let base_name = if name == "ln" { "log" } else { name };
-                format!("{}{}({})", prefix, base_name, args.join(", "))
+                if is_arg_complex {
+                    format!("c{}({})", base_name, args.join(", "))
+                } else {
+                    format!("{}({})", base_name, args.join(", "))
+                }
             }
             _ => format!("{}({})", name, args.join(", ")),
         }
@@ -213,10 +223,21 @@ impl CodegenBackend for GlslDoubleBackend {
             "abs" | "length" | "norm" => return format!("dcabs({})", args.join(", ")),
             "real" => return format!("vec2(({})[0])", args[0]),
             "imag" => return format!("vec2(({})[1])", args[0]),
-            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
-                let prefix = if is_arg_complex { "dc" } else { "d" };
+            "conj" => {
+                if is_arg_complex {
+                    format!("dcconj({})", args[0])
+                } else {
+                    args[0].to_string() // 実数の共役はそのまま
+                }
+            }
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "pow" => {
+                // Realなら標準関数 (例: sin), Complexなら csin
                 let base_name = if name == "ln" { "log" } else { name };
-                format!("{}{}({})", prefix, base_name, args.join(", "))
+                if is_arg_complex {
+                    format!("dc{}({})", base_name, args.join(", "))
+                } else {
+                    format!("d{}({})", base_name, args.join(", "))
+                }
             }
             _ => format!("{}({})", name, args.join(", ")),
         }
@@ -299,7 +320,14 @@ impl CodegenBackend for WgslBackend {
             "abs" | "length" | "norm" => return format!("length({})", args.join(", ")),
             "real" => return format!("({}).x", args[0]),
             "imag" => return format!("({}).y", args[0]),
-            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+            "conj" => {
+                if is_arg_complex {
+                    format!("cconj({})", args[0])
+                } else {
+                    args[0].to_string() // 実数の共役はそのまま
+                }
+            }
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "pow" => {
                 // Realなら標準関数 (例: sin), Complexなら csin
                 let base_name = if name == "ln" { "log" } else { name };
                 if is_arg_complex {
@@ -416,8 +444,15 @@ impl CodegenBackend for WgslDoubleBackend {
             "abs" | "length" | "norm" => return format!("dcabs({})", args.join(", ")),
             "real" => return format!("({}[0])", args[0]),
             "imag" => return format!("({}[1])", args[0]),
+            "conj" => {
+                if is_arg_complex {
+                    format!("dcconj({})", args[0])
+                } else {
+                    args[0].to_string() // 実数の共役はそのまま
+                }
+            }
 
-            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "conj" | "pow" => {
+            "sin" | "cos" | "tan" | "exp" | "ln" | "log" | "sqrt" | "pow" => {
                 let prefix = if is_arg_complex { "dc" } else { "d" };
                 let base_name = if name == "ln" { "log" } else { name };
                 format!("{}{}({})", prefix, base_name, args.join(", "))
